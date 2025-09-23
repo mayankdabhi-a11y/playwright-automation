@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('Flipkart: search S24 Marble Gray and verify PDP with Add to Cart', async ({ page }) => {
+  test.setTimeout(120000);
   // Navigate directly to search results to avoid homepage overlays
   await page.goto('https://www.flipkart.com/search?q=samsung%20s24%20marble%20gray', { waitUntil: 'domcontentloaded' });
 
@@ -13,10 +14,12 @@ test('Flipkart: search S24 Marble Gray and verify PDP with Add to Cart', async (
   // Ensure results page loaded
   await expect(page).toHaveURL(/\/search\?q=samsung%20s24%20marble%20gray/i);
 
-  // Wait for search results
-  // Product cards typically have anchor tags containing product titles
-  const firstResult = page.locator('a:has-text("Samsung Galaxy S24")').first();
-  await firstResult.waitFor({ state: 'visible', timeout: 30000 });
+  // Wait for search results - anchor leading to PDP typically includes /p/
+  await page.locator('a[href*="/p/"]').first().waitFor({ state: 'visible', timeout: 30000 });
+  let firstResult = page.locator('a[href*="/p/"]:has-text("Samsung Galaxy S24")').first();
+  if (await firstResult.count() === 0) {
+    firstResult = page.locator('a[href*="/p/"]:has-text("S24")').first();
+  }
 
   // Verify first result text is relevant to the search
   const firstResultTextRaw = (await firstResult.innerText()).trim();
@@ -59,10 +62,51 @@ test('Flipkart: search S24 Marble Gray and verify PDP with Add to Cart', async (
   // Verify Add to Cart button is visible
   const addToCart = productPage.getByRole('button', { name: /add to cart/i });
   await expect(addToCart).toBeVisible({ timeout: 15000 });
+  await addToCart.click();
 
-  // If it opened a new tab, close it
-  if (popup) {
-    await productPage.close();
+  // Click Go to Cart (can be button or link; may open same/new tab)
+  const goToCartButton = productPage.getByRole('button', { name: /go to cart/i });
+  const goToCartLink = productPage.getByRole('link', { name: /go to cart/i });
+
+  let cartPopupPromise = productPage.waitForEvent('popup').catch(() => null);
+  if (await goToCartButton.isVisible().catch(() => false)) {
+    await goToCartButton.click();
+  } else if (await goToCartLink.isVisible().catch(() => false)) {
+    await goToCartLink.click();
+  } else {
+    // Fallback: a dedicated view cart link often exists
+    const viewCart = productPage.locator('a[href*="/viewcart"], a:has-text("View Cart")').first();
+    if (await viewCart.isVisible().catch(() => false)) {
+      await viewCart.click();
+    }
   }
+
+  const cartPopup = await cartPopupPromise;
+  const cartPage = cartPopup ?? productPage;
+  if (!cartPopup) {
+    await cartPage.waitForLoadState('domcontentloaded');
+  }
+  await cartPage.waitForURL(/viewcart|cart/i, { timeout: 60000 }).catch(() => {});
+
+  // Wait for Price Details section to appear
+  const priceDetailsHeader = cartPage.getByText(/price details/i);
+  await expect(priceDetailsHeader).toBeVisible({ timeout: 60000 });
+
+  // Verify Price Details -> Total Amount equals 39108
+  // Get text in the cart page and pull total amount value
+  // Prefer scoping under a container that has "Price details"
+  let container = cartPage.locator(':is(section, div, aside):has-text("Price details")');
+  if (!(await container.first().isVisible().catch(() => false))) {
+    container = cartPage.locator('body');
+  }
+  const containerText = (await container.first().innerText({ timeout: 60000 })).replace(/\s+/g, ' ');
+  const totalMatch = containerText.match(/Total Amount[^\d]*([₹Rs\.\s,0-9]+)/i);
+  expect(totalMatch, 'Total Amount not found in Price Details').toBeTruthy();
+  const numeric = (totalMatch![1] || '').replace(/[^0-9]/g, '');
+  expect(numeric).toBe('39108');
+
+  // Close any extra tabs we opened
+  if (cartPopup) await cartPage.close();
+  if (popup) await productPage.close();
 });
 
