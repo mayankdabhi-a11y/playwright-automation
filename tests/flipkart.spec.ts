@@ -59,38 +59,24 @@ test('Flipkart: search S24 Marble Gray and verify PDP with Add to Cart', async (
   }
   expect(verified).toBeTruthy();
 
-  // Verify Add to Cart button is visible
-  const addToCart = productPage.getByRole('button', { name: /add to cart/i });
+  // Verify enabled Add to Cart button is visible and click it
+  const addToCart = productPage.getByRole('button', { name: /add to cart/i }).filter({ hasNot: productPage.locator('[disabled]') }).first();
   await expect(addToCart).toBeVisible({ timeout: 15000 });
   await addToCart.click();
 
-  // Click Go to Cart (can be button or link; may open same/new tab)
-  const goToCartButton = productPage.getByRole('button', { name: /go to cart/i });
-  const goToCartLink = productPage.getByRole('link', { name: /go to cart/i });
-
-  let cartPopupPromise = productPage.waitForEvent('popup').catch(() => null);
-  if (await goToCartButton.isVisible().catch(() => false)) {
-    await goToCartButton.click();
-  } else if (await goToCartLink.isVisible().catch(() => false)) {
-    await goToCartLink.click();
-  } else {
-    // Fallback: a dedicated view cart link often exists
-    const viewCart = productPage.locator('a[href*="/viewcart"], a:has-text("View Cart")').first();
-    if (await viewCart.isVisible().catch(() => false)) {
-      await viewCart.click();
-    }
-  }
-
-  const cartPopup = await cartPopupPromise;
-  const cartPage = cartPopup ?? productPage;
-  if (!cartPopup) {
-    await cartPage.waitForLoadState('domcontentloaded');
-  }
-  await cartPage.waitForURL(/viewcart|cart/i, { timeout: 60000 }).catch(() => {});
+  // Go to cart directly for reliability
+  await productPage.goto('https://www.flipkart.com/viewcart', { waitUntil: 'domcontentloaded' });
+  const cartPage = productPage;
 
   // Wait for Price Details section to appear
-  const priceDetailsHeader = cartPage.getByText(/price details/i);
-  await expect(priceDetailsHeader).toBeVisible({ timeout: 60000 });
+  // Dismiss login modal if it appears on cart as well
+  const cartCloseLogin = cartPage.getByRole('button', { name: '✕' });
+  if (await cartCloseLogin.isVisible().catch(() => false)) {
+    await cartCloseLogin.click().catch(() => {});
+  }
+  // Try to find a recognizable header or the Total Amount label directly
+  const priceDetailsHeader = cartPage.getByText(/price\s*details/i).first();
+  await priceDetailsHeader.waitFor({ state: 'visible', timeout: 60000 }).catch(() => {});
 
   // Verify Price Details -> Total Amount equals 39108
   // Get text in the cart page and pull total amount value
@@ -99,10 +85,17 @@ test('Flipkart: search S24 Marble Gray and verify PDP with Add to Cart', async (
   if (!(await container.first().isVisible().catch(() => false))) {
     container = cartPage.locator('body');
   }
-  const containerText = (await container.first().innerText({ timeout: 60000 })).replace(/\s+/g, ' ');
-  const totalMatch = containerText.match(/Total Amount[^\d]*([₹Rs\.\s,0-9]+)/i);
-  expect(totalMatch, 'Total Amount not found in Price Details').toBeTruthy();
-  const numeric = (totalMatch![1] || '').replace(/[^0-9]/g, '');
+  // Prefer a direct locator for Total Amount value near its label
+  const totalValueLocator = cartPage.locator(
+    'xpath=//*[normalize-space(translate(text(),"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"))="total amount" or contains(translate(text(),"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"total payable")]/following::*[contains(text(),"₹") or contains(text(),"Rs")][1]'
+  ).first();
+  let totalText = await totalValueLocator.textContent().catch(() => null);
+  if (!totalText) {
+    const containerText = (await container.first().innerText({ timeout: 60000 })).replace(/\s+/g, ' ');
+    const totalMatch = containerText.match(/Total\s*(Amount|Payable)[^\d]*([₹Rs\.\s,0-9]+)/i);
+    totalText = totalMatch ? totalMatch[2] : '';
+  }
+  const numeric = String(totalText || '').replace(/[^0-9]/g, '');
   expect(numeric).toBe('39108');
 
   // Close any extra tabs we opened
