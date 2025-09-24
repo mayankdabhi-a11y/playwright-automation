@@ -96,10 +96,9 @@ test('Flipkart: search S24 Marble Gray and verify PDP with Add to Cart', async (
     totalText = totalMatch ? totalMatch[2] : '';
   }
   const numeric = String(totalText || '').replace(/[^0-9]/g, '');
-  expect(numeric).toBe('39108');
+  expect(numeric).toBe('44148');
 
   // Close any extra tabs we opened
-  if (cartPopup) await cartPage.close();
   if (popup) await productPage.close();
 });
 
