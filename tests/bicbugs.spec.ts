@@ -1,44 +1,42 @@
+// tests/bicbugs.spec.ts
 import { test } from '@playwright/test';
+import { PageHelper } from '../helpers/PageHelper';
+import { BicBugsSelectors } from '../selectors/bicbugs.selectors';
 
 test.describe('BicBugs - simple search and click', () => {
-  test('go to site, search text, if visible click it', async ({ page }) => {
-    await page.goto('https://bicbugs.com/', { waitUntil: 'domcontentloaded' });
+  let helper: PageHelper;
 
-    // Search for the exact text
-    const query = 'Morpho menelaus blue butterfly French Guyana';
-    const searchSelectors = [
-      'input[name="s"]',
-      'input[type="search"]',
-      'form[role="search"] input',
-      '#woocommerce-product-search-field-0',
-    ];
+  test.beforeEach(async ({ page }) => {
+    helper = new PageHelper(page);
 
-    let inputFilled = false;
-    for (const sel of searchSelectors) {
-      const input = page.locator(sel).first();
-      if (await input.isVisible({ timeout: 1000 }).catch(() => false)) {
-        await input.fill(query);
-        await input.press('Enter');
-        inputFilled = true;
-        break;
-      }
-    }
+    await helper.setViewport(2560, 1280);
+    await helper.goTo('https://bicbugs.com/');
 
-    if (!inputFilled) {
-      // Fallback: navigate directly to search results
-      await page.goto(`https://bicbugs.com/?s=${encodeURIComponent(query)}`);
-    }
+    // Dismiss popup if it appears
+    await helper.dismissPopup();
+  });
 
-    // If the link with the text is visible, click it
-    const exactLink = page.getByRole('link', { name: new RegExp(query, 'i') }).first();
-    const partialLink = page.locator('a:has-text("Morpho menelaus")').first();
+  test('go to site, search text, if visible click it', async () => {
+    // Step 1: Click product from homepage
+    await helper.clickXPath(BicBugsSelectors.morphoBlue);
+    await helper.waitFor(2);
+    await helper.waitForFullLoad();
 
-    if (await exactLink.isVisible({ timeout: 4000 }).catch(() => false)) {
-      await exactLink.click();
-    } else if (await partialLink.isVisible({ timeout: 4000 }).catch(() => false)) {
-      await partialLink.click();
-    }
-    // test over
+    // Step 2: Add to cart
+    await helper.clickXPath(BicBugsSelectors.addToCartButton);
+    await helper.waitFor(2);
+    await helper.waitForFullLoad();
+
+    // Step 3: Verify confirmation message
+    const expectedMessage = 'Morpho menelaus blue butterfly French Guyana has been added to your cart.';
+    await helper.assertXPathText(BicBugsSelectors.addedToCartMessage, expectedMessage);
+
+    // Step 4: Navigate to cart
+    await helper.clickXPath(BicBugsSelectors.cartIcon);
+    await helper.waitFor(2);
+    await helper.waitForFullLoad();
+
+    // Step 5: Verify item in cart
+    await helper.assertXPathText(BicBugsSelectors.cartItemText, 'Morpho menelaus blue butterfly French Guyana - unmounted/wings closed');
   });
 });
-
